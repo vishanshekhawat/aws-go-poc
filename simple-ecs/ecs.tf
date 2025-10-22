@@ -1,6 +1,7 @@
-resource "aws_ecs_cluster" "cluster" {
+resource "aws_ecs_cluster" "main" {
   name = "${var.app_name}-cluster"
 }
+
 
 data "aws_ecr_repository" "repo" {
   name = aws_ecr_repository.repo.name
@@ -26,7 +27,7 @@ resource "aws_ecs_task_definition" "task" {
     logConfiguration = {
       logDriver = "awslogs"
       options = {
-        awslogs-group         = "/ecs/${var.app_name}"
+        awslogs-group         = aws_cloudwatch_log_group.log.name
         awslogs-region        = var.aws_region
         awslogs-stream-prefix = "ecs"
       }
@@ -41,18 +42,22 @@ resource "aws_cloudwatch_log_group" "log" {
 
 resource "aws_ecs_service" "service" {
   name            = "${var.app_name}-svc"
-  cluster         = aws_ecs_cluster.cluster.id
+  cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.task.arn
   desired_count   = 1
   launch_type     = "FARGATE"
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
-    security_groups  = [aws_security_group.service.id]
+    security_groups  = [aws_security_group.ecs_sg.id]
     assign_public_ip = true
   }
 
-  # optional: wait for steady state
-  deployment_minimum_healthy_percent = 50
-  deployment_maximum_percent         = 200
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app_tg.arn
+    container_name   = var.app_name
+    container_port   = var.container_port
+  }
+
+  depends_on = [aws_lb_listener.http]
 }
