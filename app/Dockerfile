@@ -8,7 +8,7 @@ WORKDIR /app
 COPY . .
 
 # Build the Go application
-RUN go build -o myapp ./cmd/server
+RUN go build -o myapp .
 
 # Stage 2: Create a smaller image for the final executable
 FROM alpine:latest
