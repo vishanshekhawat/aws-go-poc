@@ -1,9 +1,15 @@
 name: Build and Push to ECR
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - deployment/**
 
 permissions:
   id-token: write
@@ -23,7 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: "1.21"
+          go-version: "1.24"
           cache: true
 
       - name: Install golangci-lint
@@ -33,14 +39,68 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v3
         with:
-          version: v1.55.2
+          version: latest
           working-directory: app
           args: --timeout=5m
+
+  push-image:
+    name: Push Image
+    runs-on: ubuntu-latest
+    needs: terraform-plan
+    # Setting an environment causes GitHub to require environment protection rules
+    # (e.g. required reviewers / manual approval) before this job runs.
+    environment: deployment
+
+    env:
+      AWS_REGION: "ap-south-1"
+      ECR_REPOSITORY: "aws-go-poc-simple-ecs" # <-- Ensure this is set!
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Detect Go file changes
+        id: changes
+        run: |
+          git fetch origin ${{ github.event.before }}
+          if git diff --quiet ${{ github.event.before }} ${{ github.sha }} -- '**.go' go.mod go.sum; then
+            echo "SKIP_BUILD=true" >> $GITHUB_ENV
+          fi
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: env.SKIP_BUILD != 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, Tag, and Push Image
+        if: env.SKIP_BUILD != 'true'
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: latest
+        run: |
+          echo "ECR_REGISTRY=$ECR_REGISTRY"
+          echo "ECR_REPOSITORY=$ECR_REPOSITORY"
+
+          # Ensure repository name is set
+          if [ -z "$ECR_REPOSITORY" ]; then
+            echo "Error: ECR_REPOSITORY is empty!"
+            exit 1
+          fi
+
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f app/Dockerfile app/
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
   terraform-plan:
     name: Terraform Init & Plan
     runs-on: ubuntu-latest
-
+    needs: lint
     env:
       AWS_REGION: "ap-south-1"
 
@@ -61,25 +121,56 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Initialize Terraform
-        working-directory: deployment/terraform
+        working-directory: deployment
         run: terraform init
 
       - name: Plan Terraform
-        working-directory: deployment/terraform
+        working-directory: deployment
         run: terraform plan
 
-  apply-and-push:
-    name: Manual approval → Apply Terraform and Push Image
+  terraform-apply:
+    name: Terraform Apply
     runs-on: ubuntu-latest
     needs: terraform-plan
-    # Setting an environment causes GitHub to require environment protection rules
-    # (e.g. required reviewers / manual approval) before this job runs.
-    environment: deployment
-
+    environment: production
     env:
       AWS_REGION: "ap-south-1"
-      ECR_REPOSITORY: "aws-go-poc" # <-- Ensure this is set!
 
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: latest
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Initialize Terraform
+        working-directory: deployment
+        run: terraform init
+
+      - name: Apply Terraform
+        working-directory: deployment
+        run: terraform apply --auto-approve
+
+  deploy-bluegreen:
+    name: Trigger CodeDeploy Blue/Green Deployment
+    runs-on: ubuntu-latest
+    needs: terraform-apply
+    env:
+      AWS_REGION: "ap-south-1"
+      CODEDEPLOY_APP_NAME: "aws-go-poc-simple-ecs-codedeploy-app"
+      CODEDEPLOY_GROUP_NAME: "aws-go-poc-simple-deploy-group"
+      ECR_REPOSITORY: "aws-go-poc-simple-ecs"
+      EXECUTION_ROLE_NAME: "aws-go-poc-simple-ecs-task-exec-role" # must match TF role name
+      TASK_FAMILY: "aws-go-poc-simple-ecs"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -91,28 +182,85 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Apply Terraform
-        working-directory: deployment/terraform
-        run: terraform apply -auto-approve
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Build, Tag, and Push Image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: latest
+      - name: Fetch ECS Execution Role ARN
+        id: execrole
         run: |
-          echo "ECR_REGISTRY=$ECR_REGISTRY"
-          echo "ECR_REPOSITORY=$ECR_REPOSITORY"
+          echo "Fetching ECS execution role ARN..."
+          ROLE_ARN=$(aws iam get-role --role-name $EXECUTION_ROLE_NAME --query "Role.Arn" --output text)
+          if [ -z "$ROLE_ARN" ]; then
+            echo "❌ Failed to find IAM role: $EXECUTION_ROLE_NAME"
+            exit 1
+          fi
+          echo "EXECUTION_ROLE_ARN=$ROLE_ARN" >> $GITHUB_ENV
+          echo "✅ Found execution role ARN: $ROLE_ARN"
 
-          # Ensure repository name is set
-          if [ -z "$ECR_REPOSITORY" ]; then
-            echo "Error: ECR_REPOSITORY is empty!"
+      - name: Register New ECS Task Definition
+        id: register-task
+        run: |
+          echo "Registering new ECS task definition..."
+          IMAGE_URI=$(aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageUri' \
+            --output text)
+
+          if [ -z "$IMAGE_URI" ]; then
+            echo "❌ Failed to get image URI from ECR!"
             exit 1
           fi
 
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f build/package/Dockerfile .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          export IMAGE_URI EXECUTION_ROLE_ARN
+          envsubst < deployment/taskdef.json > taskdef-updated.json
+
+          echo "Task definition after substitution:"
+          cat taskdef-updated.json
+
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://taskdef-updated.json \
+            --query "taskDefinition.taskDefinitionArn" --output text)
+
+          if [ -z "$TASK_DEF_ARN" ]; then
+            echo "❌ Failed to register new ECS task definition"
+            exit 1
+          fi
+
+          echo "✅ Registered task definition: $TASK_DEF_ARN"
+          echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
+
+      - name: Prepare AppSpec for CodeDeploy
+        id: appspec
+        run: |
+          echo "Preparing appspec.yaml with latest task definition..."
+          sed "s|<TASK_DEFINITION>|$TASK_DEF_ARN|g" deployment/appspec.yaml > appspec-updated.yaml
+
+          echo "Final appspec.yaml:"
+          cat appspec-updated.yaml
+
+          # Encode in Base64 for CodeDeploy API
+          BASE64_APP_SPEC=$(base64 -w 0 appspec-updated.yaml)
+          echo "BASE64_APP_SPEC=$BASE64_APP_SPEC" >> $GITHUB_ENV
+
+      - name: Create CodeDeploy Deployment
+        id: codedeploy
+        run: |
+          echo "Triggering CodeDeploy ECS Blue/Green deployment..."
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name $CODEDEPLOY_APP_NAME \
+            --deployment-group-name $CODEDEPLOY_GROUP_NAME \
+            --revision "{\"revisionType\":\"AppSpecContent\",\"appSpecContent\":{\"content\":\"$BASE64_APP_SPEC\"}}" \
+            --description "GitHub Actions Blue/Green deployment $(date +%Y-%m-%d:%H:%M:%S)" \
+            --query "deploymentId" \
+            --output text)
+
+          if [ -z "$DEPLOY_ID" ]; then
+            echo "❌ Failed to create CodeDeploy deployment"
+            exit 1
+          fi
+
+          echo "✅ Created deployment ID: $DEPLOY_ID"
+          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+
+      - name: Wait for Deployment to Finish
+        run: |
+          echo "⏳ Waiting for CodeDeploy deployment to complete..."
+          aws deploy wait deployment-successful --deployment-id $DEPLOY_ID
+          echo "✅ Deployment completed successfully!"

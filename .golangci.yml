@@ -5,14 +5,20 @@ run:
 linters:
   enable:
     - gofmt
-    - golint
     - govet
     - errcheck
     - staticcheck
     - gosimple
-
+  disable:
+    - golint # Removed as it's deprecated
 issues:
   exclude-rules:
     - path: _test\.go
       linters:
         - errcheck
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  gofmt:
+    simplify: true
