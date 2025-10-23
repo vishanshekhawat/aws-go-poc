@@ -40,7 +40,6 @@ jobs:
   push-image:
     name: Push Image
     runs-on: ubuntu-latest
-    needs: terraform-plan
     # Setting an environment causes GitHub to require environment protection rules
     # (e.g. required reviewers / manual approval) before this job runs.
     environment: deployment
@@ -78,69 +77,6 @@ jobs:
             exit 1
           fi
 
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f app/Dockerfile .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f app/Dockerfile app/
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-  terraform-plan:
-    name: Terraform Init & Plan
-    runs-on: ubuntu-latest
-    needs: lint
-    env:
-      AWS_REGION: "ap-south-1"
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: latest
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v3
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Initialize Terraform
-        working-directory: deployment
-        run: terraform init
-
-      - name: Plan Terraform
-        working-directory: deployment
-        run: terraform plan
-
-  terraform-apply:
-    name: Terraform Apply
-    runs-on: ubuntu-latest
-    needs: terraform-plan
-    environment: production
-    env:
-      AWS_REGION: "ap-south-1"
-
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: latest
-
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v3
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Initialize Terraform
-        working-directory: deployment
-        run: terraform init
-
-      - name: Apply Terraform
-        working-directory: deployment
-        run: terraform apply
