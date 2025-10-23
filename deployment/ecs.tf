@@ -53,11 +53,19 @@ resource "aws_ecs_service" "service" {
     assign_public_ip = true
   }
 
+  deployment_controller {
+    type = "CODE_DEPLOY" # this enables blue/green
+  }
+
   load_balancer {
-    target_group_arn = aws_lb_target_group.app_tg.arn
+    target_group_arn = aws_lb_target_group.blue.arn
     container_name   = var.app_name
     container_port   = var.container_port
   }
 
   depends_on = [aws_lb_listener.http]
+  # ensure service is not managed by terraform for deployments that CodeDeploy will manage:
+  lifecycle {
+    ignore_changes = [task_definition] # optional: let CodeDeploy push new task revisions
+  }
 }

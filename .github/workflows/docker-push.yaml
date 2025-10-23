@@ -159,3 +159,60 @@ jobs:
       - name: Apply Terraform
         working-directory: deployment
         run: terraform apply --auto-approve
+
+  deploy-bluegreen:
+    name: Trigger CodeDeploy Blue/Green
+    runs-on: ubuntu-latest
+    needs: push-image
+    env:
+      AWS_REGION: "ap-south-1"
+      CODEDEPLOY_APP_NAME: "aws-go-poc-simple-ecs-codedeploy-app"
+      CODEDEPLOY_GROUP_NAME: "aws-go-poc-simple-ecs-dg"
+      ECR_REPOSITORY: "aws-go-poc-simple-ecs"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Register new ECS task definition with updated image
+        id: taskdef
+        run: |
+          echo "Updating ECS task definition with new image"
+          IMAGE_URI=$(aws ecr describe-images \
+            --repository-name $ECR_REPOSITORY \
+            --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageUri' \
+            --output text)
+
+          # Replace image URI in task definition template
+          envsubst < deployment/taskdef.json > taskdef-updated.json
+
+          echo "Registered task definition:"
+          cat taskdef-updated.json
+
+          aws ecs register-task-definition --cli-input-json file://taskdef-updated.json
+
+      - name: Create CodeDeploy Deployment
+        id: deploy
+        run: |
+          echo "Creating CodeDeploy deployment..."
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name $CODEDEPLOY_APP_NAME \
+            --deployment-group-name $CODEDEPLOY_GROUP_NAME \
+            --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
+            --file-exists-behavior OVERWRITE \
+            --ignore-application-stop-failures \
+            --description "GitHub Actions Deployment $(date +%Y-%m-%d:%H:%M:%S)" \
+            --region $AWS_REGION \
+            --query "deploymentId" --output text)
+
+          echo "Deployment ID: $DEPLOY_ID"
+          echo "DEPLOY_ID=$DEPLOY_ID" >> $GITHUB_ENV
+
+      - name: Wait for Deployment to Finish
+        run: |
+          echo "Waiting for CodeDeploy deployment to complete..."
+          aws deploy wait deployment-successful --deployment-id $DEPLOY_ID
+          echo "✅ Deployment completed successfully!"
