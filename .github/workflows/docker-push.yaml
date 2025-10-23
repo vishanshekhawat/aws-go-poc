@@ -61,11 +61,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Initialize Terraform
-        working-directory: deployment/terraform
+        working-directory: deployment
         run: terraform init
 
       - name: Plan Terraform
-        working-directory: deployment/terraform
+        working-directory: deployment
         run: terraform plan
 
   apply-and-push:
@@ -92,7 +92,7 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Apply Terraform
-        working-directory: deployment/terraform
+        working-directory: deployment
         run: terraform apply -auto-approve
 
       - name: Login to Amazon ECR
