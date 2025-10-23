@@ -160,7 +160,7 @@ jobs:
         working-directory: deployment
         run: terraform apply --auto-approve
 
-    deploy-bluegreen:
+  deploy-bluegreen:
     name: Trigger CodeDeploy Blue/Green Deployment
     runs-on: ubuntu-latest
     needs: terraform-apply
