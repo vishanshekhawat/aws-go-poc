@@ -5,11 +5,11 @@ on:
   pull_request:
     branches:
       - main
-  paths:
-    - "**.go"
-    - go.mod
-    - go.sum
-    - deployment/**
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - deployment/**
 
 permissions:
   id-token: write
