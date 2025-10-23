@@ -4,7 +4,7 @@ resource "aws_ecs_cluster" "main" {
 
 
 data "aws_ecr_repository" "repo" {
-  name = aws_ecr_repository.repo.name
+  name = var.app_name
 }
 
 resource "aws_ecs_task_definition" "task" {
