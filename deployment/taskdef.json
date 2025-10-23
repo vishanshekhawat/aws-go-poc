@@ -1,6 +1,6 @@
 {
   "family": "aws-go-poc-simple-ecs",
-  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "executionRoleArn": "${EXECUTION_ROLE_ARN}",
   "networkMode": "awsvpc",
   "requiresCompatibilities": ["FARGATE"],
   "cpu": "256",
