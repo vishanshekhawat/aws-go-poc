@@ -15,6 +15,7 @@ func pinghandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+//nolint:errcheck
 func main() {
 	go func() {
 		for {
