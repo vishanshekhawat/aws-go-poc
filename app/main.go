@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// checking comment for linter
 func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Hello from Go ECS PoC!\nService: %s\n", "sample-service")
 }
