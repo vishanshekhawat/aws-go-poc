@@ -1,9 +1,15 @@
 name: Build and Push to ECR
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - main
+  paths:
+    - "**.go"
+    - go.mod
+    - go.sum
+    - deployment/**
 
 permissions:
   id-token: write
@@ -52,6 +58,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+      - name: Detect Go file changes
+        id: changes
+        run: |
+          git fetch origin ${{ github.event.before }}
+          if git diff --quiet ${{ github.event.before }} ${{ github.sha }} -- '**.go' go.mod go.sum; then
+            echo "SKIP_BUILD=true" >> $GITHUB_ENV
+          fi
 
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -61,10 +74,12 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: env.SKIP_BUILD != 'true'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build, Tag, and Push Image
+        if: env.SKIP_BUILD != 'true'
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: latest
