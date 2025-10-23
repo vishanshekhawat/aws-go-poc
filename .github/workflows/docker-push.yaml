@@ -167,7 +167,7 @@ jobs:
     env:
       AWS_REGION: "ap-south-1"
       CODEDEPLOY_APP_NAME: "aws-go-poc-simple-ecs-codedeploy-app"
-      CODEDEPLOY_GROUP_NAME: "aws-go-poc-simple-ecs-dg"
+      CODEDEPLOY_GROUP_NAME: "aws-go-poc-simple-deploy-group"
       ECR_REPOSITORY: "aws-go-poc-simple-ecs"
       EXECUTION_ROLE_NAME: "aws-go-poc-simple-ecs-task-exec-role" # must match TF role name
       TASK_FAMILY: "aws-go-poc-simple-ecs"
